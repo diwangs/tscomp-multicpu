@@ -59,8 +59,8 @@ int main()  /* Main function. */
     fprintf(outfile, "Number of jobs processed%12d\n\n\n",
             num_responses_required);
     fprintf(outfile, "Number of      Average         Average");
-    fprintf(outfile, "       Utilization\n");
-    fprintf(outfile, "terminals   response time  number in queue     of CPU");
+    fprintf(outfile, "       Utilization     Average         Average        Utilization\n");
+    fprintf(outfile, "terminals   response time  number in queue     of CPU 1   response time  number in queue     of CPU 2");
 
     /* Run the simulation varying the number of terminals. */
 
