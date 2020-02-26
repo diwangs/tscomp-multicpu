@@ -2,14 +2,22 @@
 
 #include "simlib.h"               /* Required for use of simlib.c. */
 
-#define EVENT_ARRIVAL          1  /* Event type for arrival of job to CPU. */
-#define EVENT_END_CPU_RUN      2  /* Event type for end of a CPU run. */
-#define EVENT_END_SIMULATION   3  /* Event type for end of the simulation. */
-#define LIST_QUEUE             1  /* List number for CPU queue. */
-#define LIST_CPU               2  /* List number for CPU. */
-#define SAMPST_RESPONSE_TIMES  1  /* sampst variable for response times. */
-#define STREAM_THINK           1  /* Random-number stream for think times. */
-#define STREAM_SERVICE         2  /* Random-number stream for service times. */
+#define EVENT_ARRIVAL               1  /* Event type for arrival of job to CPU. */
+#define EVENT_END_CPU_1_RUN         2  /* Event type for end of a CPU run. */
+#define EVENT_END_CPU_2_RUN         3  /* Event type for end of a CPU run. */
+#define EVENT_END_SIMULATION        4  /* Event type for end of the simulation. */
+
+#define LIST_QUEUE_1                1  /* List number for CPU queue. */
+#define LIST_QUEUE_2                2
+#define LIST_CPU_1                  3  /* List number for CPU. */
+#define LIST_CPU_2                  4
+
+#define SAMPST_CPU_1_RESPONSE_TIME  1  /* sampst variable for response times. */
+#define SAMPST_CPU_2_RESPONSE_TIME  2  /* sampst variable for response times. */
+
+#define STREAM_THINK                1  /* Random-number stream for think times. */
+#define STREAM_SERVICE              2  /* Random-number stream for service times. */
+#define STREAM_LOAD_BALANCER        3
 
 /* Declare non-simlib global variables. */
 
@@ -21,8 +29,8 @@ FILE  *infile, *outfile;
 /* Declare non-simlib functions. */
 
 void arrive(void);
-void start_CPU_run(void);
-void end_CPU_run(void);
+void start_CPU_run(int);
+void end_CPU_run(int);
 void report(void);
 
 
@@ -91,8 +99,11 @@ int main()  /* Main function. */
                 case EVENT_ARRIVAL:
                     arrive();
                     break;
-                case EVENT_END_CPU_RUN:
-                    end_CPU_run();
+                case EVENT_END_CPU_1_RUN:
+                    end_CPU_run(LIST_CPU_1);
+                    break;
+                case EVENT_END_CPU_2_RUN:
+                    end_CPU_run(LIST_CPU_2);
                     break;
                 case EVENT_END_SIMULATION:
                     report();
@@ -123,24 +134,36 @@ void arrive(void)  /* Event function for arrival of job at CPU after think
             2. The (remaining) CPU service time required (here equal to the
                total service time since the job is just arriving). */
 
+    double noise = uniform(0.0, 1.0, STREAM_LOAD_BALANCER);
+
     transfer[1] = sim_time;
     transfer[2] = expon(mean_service, STREAM_SERVICE);
-    list_file(LAST, LIST_QUEUE);
+
+    // balance load based on noise
+    if (noise < 0.5)
+        list_file(LAST, LIST_QUEUE_1);
+    else
+        list_file(LAST, LIST_QUEUE_2);
 
     /* If the CPU is idle, start a CPU run. */
 
-    if (list_size[LIST_CPU] == 0)
-        start_CPU_run();
+    if (list_size[LIST_CPU_1] == 0 && list_size[LIST_QUEUE_1] > 0) // check if there's job
+        start_CPU_run(LIST_CPU_1);
+    if (list_size[LIST_CPU_2] == 0 && list_size[LIST_QUEUE_2] > 0)
+        start_CPU_run(LIST_CPU_2);
 }
 
 
-void start_CPU_run(void)  /* Non-event function to start a CPU run of a job. */
+void start_CPU_run(int cpu_id)  /* Non-event function to start a CPU run of a job. */
 {
     float run_time;
 
     /* Remove the first job from the queue. */
 
-    list_remove(FIRST, LIST_QUEUE);
+    if (cpu_id == LIST_CPU_1)
+        list_remove(FIRST, LIST_QUEUE_1);
+    else if (cpu_id == LIST_CPU_2)
+        list_remove(FIRST, LIST_QUEUE_2);
 
     /* Determine the CPU time for this pass, including the swap time. */
 
@@ -158,19 +181,22 @@ void start_CPU_run(void)  /* Non-event function to start a CPU run of a job. */
 
     /* Place the job into the CPU. */
 
-    list_file(FIRST, LIST_CPU);
+    list_file(FIRST, cpu_id);
 
     /* Schedule the end of the CPU run. */
 
-    event_schedule(sim_time + run_time, EVENT_END_CPU_RUN);
+    if (cpu_id == LIST_CPU_1)
+        event_schedule(sim_time + run_time, EVENT_END_CPU_1_RUN);
+    else if (cpu_id == LIST_CPU_2)
+        event_schedule(sim_time + run_time, EVENT_END_CPU_2_RUN);
 }
 
 
-void end_CPU_run(void)  /* Event function to end a CPU run of a job. */
+void end_CPU_run(int cpu_id)  /* Event function to end a CPU run of a job. */
 {
     /* Remove the job from the CPU. */
 
-    list_remove(FIRST, LIST_CPU);
+    list_remove(FIRST, cpu_id);
 
     /* Check to see whether this job requires more CPU time. */
 
@@ -179,8 +205,11 @@ void end_CPU_run(void)  /* Event function to end a CPU run of a job. */
         /* This job requires more CPU time, so place it at the end of the queue
            and start the first job in the queue. */
 
-        list_file(LAST, LIST_QUEUE);
-        start_CPU_run();
+        if (cpu_id == LIST_CPU_1)
+            list_file(LAST, LIST_QUEUE_1);
+        else if (cpu_id == LIST_CPU_2)
+            list_file(LAST, LIST_QUEUE_2);
+        start_CPU_run(cpu_id);
     }
 
     else {
@@ -189,7 +218,10 @@ void end_CPU_run(void)  /* Event function to end a CPU run of a job. */
            back to its terminal, i.e., schedule another arrival from the same
            terminal. */
 
-        sampst(sim_time - transfer[1], SAMPST_RESPONSE_TIMES);
+        if (cpu_id == LIST_CPU_1)
+            sampst(sim_time - transfer[1], SAMPST_CPU_1_RESPONSE_TIME);
+        else if (cpu_id == LIST_CPU_2)
+            sampst(sim_time - transfer[1], SAMPST_CPU_2_RESPONSE_TIME);
 
         event_schedule(sim_time + expon(mean_think, STREAM_THINK),
                        EVENT_ARRIVAL);
@@ -212,8 +244,10 @@ void end_CPU_run(void)  /* Event function to end a CPU run of a job. */
             /* Not enough jobs are done; if the queue is not empty, start
                another job. */
 
-            if (list_size[LIST_QUEUE] > 0)
-                start_CPU_run();
+            if (list_size[LIST_CPU_1] == 0 && list_size[LIST_QUEUE_1] > 0)
+                start_CPU_run(LIST_CPU_1);
+            if (list_size[LIST_CPU_2] == 0 && list_size[LIST_QUEUE_2] > 0)
+                start_CPU_run(LIST_CPU_2);
     }
 }
 
@@ -222,8 +256,8 @@ void report(void)  /* Report generator function. */
 {
     /* Get and write out estimates of desired measures of performance. */
 
-    fprintf(outfile, "\n\n%5d%16.3f%16.3f%16.3f", num_terms,
-            sampst(0.0, -SAMPST_RESPONSE_TIMES), filest(LIST_QUEUE),
-            filest(LIST_CPU));
+    fprintf(outfile, "\n\n%5d%16.3f%16.3f%16.3f%16.3f%16.3f%16.3f", num_terms,
+            sampst(0.0, -SAMPST_CPU_1_RESPONSE_TIME), filest(LIST_QUEUE_1), filest(LIST_CPU_1),
+            sampst(0.0, -SAMPST_CPU_2_RESPONSE_TIME), filest(LIST_QUEUE_2), filest(LIST_CPU_2));
 }
 
